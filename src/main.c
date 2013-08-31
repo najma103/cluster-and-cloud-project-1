@@ -16,7 +16,7 @@
 #define INPUTS_COUNT 3
 #define INPUTS {"AToTCities.txt", "JttCoftE.txt", "WaP.txt"}
 
-int NUM_THREADS = 1;
+int NUM_THREADS = 2;
 
 char shakespearePath[MAX_FILE_LENGTH];
 
@@ -71,15 +71,12 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	/*int i;
-	for(i = 0; i < argc; i++) {
-		printf("%s\n", argv[i]);
-	}*/
-
 
 	// Read input files to buffer
 	readShakespeare();
 	readInputs();
+
+	
 
 	//printf("Creating hashmap..\n");
 	hash = malloc(sizeof(struct hsearch_data));
@@ -117,21 +114,14 @@ int main(int argc, char **argv) {
 	// Initialise hash table of words
 
 
-	// DEBUG: Print the things
-	/*{
-		int i;
-		for(i = 0; i < NUM_THREADS; i++) {
-			printf("start_pos[%d] = %d, Len:%d, char:'%c'\n", i,start_pos[i], start_pos[i+1] - start_pos[i], shakespeare[start_pos[i]]);
-		}
-	}*/
-
-
-
 	// Do word counting in parallel:
+	
+		
 	omp_set_num_threads(NUM_THREADS);
-	#pragma omp parallel num_threads(NUM_THREADS)
+	//#pragma omp parallel shared(hash)//num_threads(NUM_THREADS)
 	{
-		int id = omp_get_thread_num();
+		ENTRY e, *ep;
+		int id = 0;//omp_get_thread_num();
 		int i = 0, inword = 0;
 		char thisword[MAX_WORD_LENGTH];
 		memset(thisword, 0, sizeof(char)*MAX_WORD_LENGTH);
@@ -142,7 +132,9 @@ int main(int argc, char **argv) {
 			//printf("'%c'", shakespeare[i]);
 			if(isAlphaNum(shakespeare[i])) {
 				inword = 1;
+				//printf("About to strncat %s\n", thisword);
 				strncat(thisword, &shakespeare[i],1);
+				//printf("Just did a strncat %s\n", thisword);
 			} else {
 
 				// If we were in a word, we have 
@@ -150,7 +142,6 @@ int main(int argc, char **argv) {
 				if(inword) {
 					//printf("lcase the word '%s'\n", thisword);
 					lcase(thisword);
-					ENTRY e, *ep;
 					e.key = thisword;
 					//printf("Finding key..%s in hash %p\n", e.key, hash);
 					hsearch_r(e, FIND, &ep, hash);
@@ -159,14 +150,13 @@ int main(int argc, char **argv) {
 						//printf("found\n");
 						// If an entry exists for this word, aquire a lock
 						// then update the count.
-						//printf("Incrementing word count...%d\n", ((word_count_t*)ep->data)->count);
 						omp_set_lock(((word_count_t*)ep->data)->lock);
 						((word_count_t*)ep->data)->count++;
 						omp_unset_lock(((word_count_t*)ep->data)->lock);
 					} else {
 						//printf("Creating new entry...\n");
 						word_count_t *new = malloc(sizeof(word_count_t));
-						omp_lock_t *newlock;
+						omp_lock_t *newlock = malloc(sizeof(omp_lock_t));
 						omp_init_lock(newlock);
 						new->count = 0;
 						new->lock = newlock;
@@ -176,12 +166,18 @@ int main(int argc, char **argv) {
 						int err;
 
 						if(err = hsearch_r(e, ENTER, &ep, hash)) {
-							printf("ERROR ENTERING HASH\n");
-							if(err = ENOMEM) { 
-								printf("ENOMEM\n");
-							} else if (err = ESRCH) {
-								printf("ESRCH\n");
+							if(err != 1) {
+								printf("ERROR ENTERING HASH: %d\n", err);
+								if(err == ENOMEM) { 
+									printf("ENOMEM\n");
+								} else if (err == ESRCH) {
+									printf("ESRCH\n");
+								}
 							}
+
+
+						} else {
+							//printf("Entered hash!\n");
 						}
 						//printf("Added thing %p, %s, %p", ep, ep->key, ep->data);
 						//exit(0);
@@ -194,13 +190,24 @@ int main(int argc, char **argv) {
 				}
 
 			}
-
+		// Debug code, do we have anything here?
+		//ENTRY e, *ep;
+		//e.key = "thy";
+		//lcase(e.key);
+		//hsearch_r(e, FIND, &ep, hash);
+		//hsearch_r(e, FIND, &ep, hash);
+		//if(ep) {
+			//printf("Found here! %d\n", ((word_count_t*)ep->data)->count);
+		//} else {
+			//printf("Not even here, seriously?\n");
+		//}
 			
 		}
+
+
+
 	}
 
-	//cfuhash_pretty_print(shakespeare_hash, stdout);
-	//print_hash(shakespeare_hash);
 
 	// Iterate through the input file and print out the word counts7
 	{
@@ -220,22 +227,19 @@ int main(int argc, char **argv) {
 					e.key = thisword;
 					//printf("Finding key [%s]", thisword);
 					if(hsearch_r(e, FIND, &ep, hash)) {
-						printf("ERROR IN SEARCH\n");
+						//printf("ERROR IN SEARCH\n");
 					}
 					if(ep) {
-						printf("Known hash, count:%d", ((word_count_t*)ep->data)->count);
+						//printf("Known hash, count:%d", ((word_count_t*)ep->data)->count);
 						count = ((word_count_t*)ep->data)->count;
 					} else {
-						//printf("Unknown hash\n");
+						//printf("Unknown hash %p\n", ep);
 						//count = cfuhash_get(shakespeare_hash, thisword);
 					}
 
 					// TODO uncomment this.
-					//printf("%s #%d\n", thisword, count);
-					/*for(j = 0; j < MAX_WORD_LENGTH; j++) {
-						printf("%d,", (int)thisword[j]);
-					}
-					printf("\n");*/
+					printf("%s #%d\n", thisword, count);
+
 
 				}
 				inword = 0;
@@ -248,6 +252,8 @@ int main(int argc, char **argv) {
 
 
 }
+
+
 
 int isAlphaNum(char c) {
 	return ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57));
@@ -262,6 +268,7 @@ void readArgs(int argc, char **argv) {
 	}
 }
 
+
 // Read shakespeare to buffer
 void readShakespeare() {
 	FILE *fp;
@@ -275,6 +282,7 @@ void readShakespeare() {
 	fread(shakespeare, sizeof(char), size, fp);
 	fclose(fp);
 	shakespeare_size = size;
+	printf("SSIZE: %d\n", size);
 }
 
 
@@ -292,10 +300,12 @@ void readInputs() {
 		fseek(fp, 0L, SEEK_SET);
 		inputs[i] = malloc(sizeof(char)*size);
 		fread(inputs[i], sizeof(char), size, fp);
+		printf("SIZE INPUT:%d\n", size);
 		fclose(fp);
 	}
 	
 }
+
 
 // Convert an ASCII string to lower case (in place)
 void lcase(char* string) {
@@ -307,19 +317,6 @@ void lcase(char* string) {
 	}
 }
 
-/*void print_hash(cfuhash_table_t *hash) {
-	char **keys;
-	size_t key_count;
-	size_t *key_sizes;
-	keys = (char **)cfuhash_keys_data(hash, &key_count, &key_sizes, 0);
-	printf("{\n");
-	int i;
-	for(i = 0; i < key_count; i++) {
-		int *val = (int*)cfuhash_get(shakespeare_hash, keys[i]);
-		printf("\t\"%s\" => %d\n", keys[i], *val);
-	}
-	printf("}\n");
-}*/
 
 void clear_string(char* string){
 	int i;
