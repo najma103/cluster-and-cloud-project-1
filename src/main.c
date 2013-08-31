@@ -1,11 +1,14 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
 #include <string.h>
 #include <time.h>
 #include <search.h>
+#include <errno.h>
 
-#define HASH_TABLE_SIZE 500000
+#define HASH_TABLE_SIZE 10000000
 #define MAX_WORD_LENGTH 40
 #define MAX_FILE_LENGTH 100
 #define PATH_TO_DATA "../data/"
@@ -13,7 +16,7 @@
 #define INPUTS_COUNT 3
 #define INPUTS {"AToTCities.txt", "JttCoftE.txt", "WaP.txt"}
 
-int NUM_THREADS = 4;
+int NUM_THREADS = 1;
 
 char shakespearePath[MAX_FILE_LENGTH];
 
@@ -33,6 +36,9 @@ typedef struct {
 	int count;
 	omp_lock_t *lock;
 } word_count_t;
+
+// Hash table of values
+struct hsearch_data *hash;
 
 
 // prototypes
@@ -75,6 +81,13 @@ int main(int argc, char **argv) {
 	readShakespeare();
 	readInputs();
 
+	//printf("Creating hashmap..\n");
+	hash = malloc(sizeof(struct hsearch_data));
+	*hash = (struct hsearch_data){0};
+	//memset(hash, 0, sizeof(*hash));
+	hcreate_r(HASH_TABLE_SIZE, hash);
+	//printf("done %p\n", hash);
+
 	// Divide up input
 	start_pos = malloc(sizeof(int)*(NUM_THREADS + 1));
 	start_pos[NUM_THREADS] = shakespeare_size;
@@ -90,16 +103,16 @@ int main(int argc, char **argv) {
 			int dir;
 			// Alternate direction to make sure each block is
 			// roughly the same size;
-			dir = (i%2)*2 - 1;
+			//dir = (i%2)*2 - 1;
 
 			while(isAlphaNum(shakespeare[start_pos[i]])) {
-				start_pos[i] += dir;
+				start_pos[i]++;
 			}
 
 		}
 	}
 
-	printf("Divided problem\n");
+	//printf("Divided problem\n");
 
 	// Initialise hash table of words
 
@@ -116,15 +129,17 @@ int main(int argc, char **argv) {
 
 	// Do word counting in parallel:
 	omp_set_num_threads(NUM_THREADS);
-	#pragma omp parallel
+	#pragma omp parallel num_threads(NUM_THREADS)
 	{
 		int id = omp_get_thread_num();
 		int i = 0, inword = 0;
 		char thisword[MAX_WORD_LENGTH];
+		memset(thisword, 0, sizeof(char)*MAX_WORD_LENGTH);
+		//printf("thisword:%s", thisword);
 		//printf("Hello from thread %d\n", id);
 		// TODO does this skip the last character?
 		for(i = start_pos[id]; i < start_pos[id+1]; i++) {
-			printf("'%c'", shakespeare[i]);
+			//printf("'%c'", shakespeare[i]);
 			if(isAlphaNum(shakespeare[i])) {
 				inword = 1;
 				strncat(thisword, &shakespeare[i],1);
@@ -133,24 +148,23 @@ int main(int argc, char **argv) {
 				// If we were in a word, we have 
 				// reached the end.
 				if(inword) {
-					printf("lcase the word '%s'\n", thisword);
+					//printf("lcase the word '%s'\n", thisword);
 					lcase(thisword);
-					printf("done\n");
-					//printf("Finished word '%s'\n", thisword);
 					ENTRY e, *ep;
-					printf("setting key..\n");
 					e.key = thisword;
-					printf("search for word %s", thisword);
-					if(ep = hsearch(e, FIND)) {
-						printf("found\n");
+					//printf("Finding key..%s in hash %p\n", e.key, hash);
+					hsearch_r(e, FIND, &ep, hash);
+					//printf("done\n");
+					if(ep) {
+						//printf("found\n");
 						// If an entry exists for this word, aquire a lock
 						// then update the count.
-						printf("Incrementing word count...\n");
+						//printf("Incrementing word count...%d\n", ((word_count_t*)ep->data)->count);
 						omp_set_lock(((word_count_t*)ep->data)->lock);
 						((word_count_t*)ep->data)->count++;
 						omp_unset_lock(((word_count_t*)ep->data)->lock);
 					} else {
-						printf("Creating new entry...\n");
+						//printf("Creating new entry...\n");
 						word_count_t *new = malloc(sizeof(word_count_t));
 						omp_lock_t *newlock;
 						omp_init_lock(newlock);
@@ -159,11 +173,23 @@ int main(int argc, char **argv) {
 
 						e.data = new;
 
-						hsearch(e, ENTER);
+						int err;
+
+						if(err = hsearch_r(e, ENTER, &ep, hash)) {
+							printf("ERROR ENTERING HASH\n");
+							if(err = ENOMEM) { 
+								printf("ENOMEM\n");
+							} else if (err = ESRCH) {
+								printf("ESRCH\n");
+							}
+						}
+						//printf("Added thing %p, %s, %p", ep, ep->key, ep->data);
+						//exit(0);
 					}
 
 					// Clear out the current word.
-					clear_string(thisword);
+					memset(thisword, 0, sizeof(char)*MAX_WORD_LENGTH);
+					//clear_string(thisword);
 					inword = 0;
 				}
 
@@ -180,9 +206,7 @@ int main(int argc, char **argv) {
 	{
 		int i, inword = 0;
 		char thisword[MAX_WORD_LENGTH];
-		for(i = 0; i < MAX_WORD_LENGTH; i++) {
-			thisword[i] = '\0';
-		}
+		memset(thisword, 0, sizeof(char)*MAX_WORD_LENGTH);
 		for(i = 0; inputs[0][i] != '\0'; i++) {
 			if(isAlphaNum(inputs[0][i])) {
 				inword = 1;
@@ -194,15 +218,20 @@ int main(int argc, char **argv) {
 					lcase(thisword);
 					ENTRY e, *ep;
 					e.key = thisword;
-					if(ep = hsearch(e, FIND)) {
+					//printf("Finding key [%s]", thisword);
+					if(hsearch_r(e, FIND, &ep, hash)) {
+						printf("ERROR IN SEARCH\n");
+					}
+					if(ep) {
+						printf("Known hash, count:%d", ((word_count_t*)ep->data)->count);
 						count = ((word_count_t*)ep->data)->count;
 					} else {
-						//printf("Getting value for unknown hash..\n");
+						//printf("Unknown hash\n");
 						//count = cfuhash_get(shakespeare_hash, thisword);
 					}
 
 					// TODO uncomment this.
-					printf("%s #%d\n", thisword, count);
+					//printf("%s #%d\n", thisword, count);
 					/*for(j = 0; j < MAX_WORD_LENGTH; j++) {
 						printf("%d,", (int)thisword[j]);
 					}
@@ -210,7 +239,7 @@ int main(int argc, char **argv) {
 
 				}
 				inword = 0;
-				clear_string(thisword);
+				memset(thisword, 0, sizeof(char)*MAX_WORD_LENGTH);
 			}
 		}
 	}
@@ -236,7 +265,9 @@ void readArgs(int argc, char **argv) {
 // Read shakespeare to buffer
 void readShakespeare() {
 	FILE *fp;
-	fp = fopen(shakespearePath, "rb");
+	if(!(fp = fopen(shakespearePath, "rb"))){
+		printf("Could not open file %s\n", shakespearePath);
+	}
 	fseek(fp, 0L, SEEK_END);
 	int size = ftell(fp);
 	fseek(fp, 0L, SEEK_SET);
@@ -252,7 +283,10 @@ void readInputs() {
 	FILE *fp;
 	int i;
 	for(i = 0; i < INPUTS_COUNT; i++) {
-		fp = fopen(inputPaths[i], "rb");
+		if(!(fp = fopen(inputPaths[i], "rb"))){
+			printf("Could not open file %s\n", inputPaths[i]);
+			exit(0);
+		}
 		fseek(fp, 0L, SEEK_END);
 		int size = ftell(fp);
 		fseek(fp, 0L, SEEK_SET);
