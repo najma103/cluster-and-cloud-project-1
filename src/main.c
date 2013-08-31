@@ -5,7 +5,7 @@
 #include <time.h>
 #include <cfuhash.h>
 
-#define INITIAL_HASH_SIZE 1000
+#define INITIAL_HASH_SIZE 100
 #define MAX_WORD_LENGTH 40
 #define MAX_FILE_LENGTH 100
 #define PATH_TO_DATA "../data/"
@@ -36,6 +36,7 @@ void readShakespeare(void);
 void readInputs(void);
 int isAlphaNum(char);
 void lcase(char*);
+void print_hash(cfuhash_table_t*);
 
 // PARAMS:
 // -t #NUM indicates number of threads to run on
@@ -121,11 +122,24 @@ int main(int argc, char **argv) {
 		for(i = start_pos[id]; i < start_pos[id+1]; i++) {
 			if(isAlphaNum(shakespeare[i])) {
 				inword = 1;
+				strncat(thisword, &shakespeare[i],1);
 			} else {
 
 				// If we were in a word, we have 
 				// reached the end.
 				if(inword) {
+					lcase(thisword);
+					//printf("Finished word '%s'\n", thisword);
+					if(cfuhash_exists(shakespeare_hash, thisword)) {
+						int *count = (int*)cfuhash_get(shakespeare_hash, thisword);
+						(*count)++;
+						//printf("New value: %s\n", value);
+						cfuhash_put(shakespeare_hash, thisword, count);
+					} else {
+						int *new = (int*)malloc(sizeof(int));
+						*new = 1;
+						cfuhash_put(shakespeare_hash, thisword, new);
+					}
 					int j;
 					for(j = 0; j < MAX_WORD_LENGTH && thisword[j] != '\0'; j++) {
 						thisword[j] = '\0';
@@ -140,6 +154,9 @@ int main(int argc, char **argv) {
 			
 		}
 	}
+
+	//cfuhash_pretty_print(shakespeare_hash, stdout);
+	print_hash(shakespeare_hash);
 
 
 }
@@ -195,4 +212,18 @@ void lcase(char* string) {
 			string[i] += 32;
 		}
 	}
+}
+
+void print_hash(cfuhash_table_t *hash) {
+	char **keys;
+	size_t key_count;
+	size_t *key_sizes;
+	keys = (char **)cfuhash_keys_data(hash, &key_count, &key_sizes, 0);
+	printf("{\n");
+	int i;
+	for(i = 0; i < key_count; i++) {
+		int *val = (int*)cfuhash_get(shakespeare_hash, keys[i]);
+		printf("\t\"%s\" => %d\n", keys[i], *val);
+	}
+	printf("}\n");
 }
