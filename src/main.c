@@ -9,6 +9,7 @@
 #include <errno.h>
 
 #define HASH_TABLE_SIZE 10000000
+#define MAX_WORDS 1000000
 #define MAX_WORD_LENGTH 40
 #define MAX_FILE_LENGTH 100
 #define PATH_TO_DATA "../data/"
@@ -16,7 +17,7 @@
 #define INPUTS_COUNT 3
 #define INPUTS {"AToTCities.txt", "JttCoftE.txt", "WaP.txt"}
 
-int NUM_THREADS = 2;
+int NUM_THREADS = 1;
 
 char shakespearePath[MAX_FILE_LENGTH];
 
@@ -30,6 +31,8 @@ char *inputs[INPUTS_COUNT];
 
 int *start_pos;
 
+unsigned int words = 0;
+
 //cfuhash_table_t *shakespeare_hash;
 
 typedef struct {
@@ -39,6 +42,8 @@ typedef struct {
 
 // Hash table of values
 struct hsearch_data *hash;
+
+ENTRY *new[MAX_WORDS]; 
 
 
 // prototypes
@@ -97,7 +102,7 @@ int main(int argc, char **argv) {
 		}
 
 		for(i = 1; i < NUM_THREADS; i++) {
-			int dir;
+			//int dir;
 			// Alternate direction to make sure each block is
 			// roughly the same size;
 			//dir = (i%2)*2 - 1;
@@ -115,16 +120,19 @@ int main(int argc, char **argv) {
 
 
 	// Do word counting in parallel:
-	
+	//word_count_t *new; //= malloc(sizeof(word_count_t));
+						//omp_lock_t *newlock;// = malloc(sizeof(omp_lock_t));
+						//omp_init_lock(newlock);
 		
 	omp_set_num_threads(NUM_THREADS);
-	//#pragma omp parallel shared(hash)//num_threads(NUM_THREADS)
+	//#pragma omp parallel shared(hash, new, shakespeare)//num_threads(NUM_THREADS)
 	{
 		ENTRY e, *ep;
-		int id = 0;//omp_get_thread_num();
+		int id = omp_get_thread_num();
 		int i = 0, inword = 0;
 		char thisword[MAX_WORD_LENGTH];
-		memset(thisword, 0, sizeof(char)*MAX_WORD_LENGTH);
+		//memset(thisword, 0, sizeof(char)*MAX_WORD_LENGTH);
+		thisword[0] = '\0';
 		//printf("thisword:%s", thisword);
 		//printf("Hello from thread %d\n", id);
 		// TODO does this skip the last character?
@@ -140,6 +148,7 @@ int main(int argc, char **argv) {
 				// If we were in a word, we have 
 				// reached the end.
 				if(inword) {
+
 					//printf("lcase the word '%s'\n", thisword);
 					lcase(thisword);
 					e.key = thisword;
@@ -147,6 +156,7 @@ int main(int argc, char **argv) {
 					hsearch_r(e, FIND, &ep, hash);
 					//printf("done\n");
 					if(ep) {
+						printf("Old word\n");
 						//printf("found\n");
 						// If an entry exists for this word, aquire a lock
 						// then update the count.
@@ -154,18 +164,43 @@ int main(int argc, char **argv) {
 						((word_count_t*)ep->data)->count++;
 						omp_unset_lock(((word_count_t*)ep->data)->lock);
 					} else {
-						//printf("Creating new entry...\n");
-						word_count_t *new = malloc(sizeof(word_count_t));
-						omp_lock_t *newlock = malloc(sizeof(omp_lock_t));
-						omp_init_lock(newlock);
-						new->count = 0;
-						new->lock = newlock;
 
-						e.data = new;
+						//printf("New word\n");
+						//printf("Creating new entry...\n");
+						
+						//e.key = "thy";
+						//hsearch_r(e, FIND, &ep, hash);
+						//printf("About to enter critical section\n");
+						int i;
+						//#pragma omp critical
+						{
+							//printf("Executing critical code\n");
+							i = words; 
+							words++;
+						}
+						//printf("Exited critical section. i=%d words=%u\n", i, words);
+						new[i] = malloc(sizeof(ENTRY));
+
+						new[i]->data = malloc(sizeof(word_count_t));
+						((word_count_t*)new[i]->data)->lock = malloc(sizeof(omp_lock_t));
+						omp_init_lock(((word_count_t*)new[i]->data)->lock);
+
+						((word_count_t*)new[i]->data)->count = 1;
+
+						ENTRY *result;// = malloc(sizeof(ENTRY));
+						//e.data = new;
 
 						int err;
 
-						if(err = hsearch_r(e, ENTER, &ep, hash)) {
+						//#pragma omp critical
+						{
+							printf("about to enter item... i: %d/%d, words:%u, new:%p, result:%p, hash:%p\n", i, sizeof(new)/sizeof(ENTRY*), words, new[i], &result, hash);
+							err = hsearch_r(*new[i], ENTER, &result, hash);
+						}
+
+						
+						if(err) {
+							printf("Entered hash\n");
 							if(err != 1) {
 								printf("ERROR ENTERING HASH: %d\n", err);
 								if(err == ENOMEM) { 
@@ -179,34 +214,44 @@ int main(int argc, char **argv) {
 						} else {
 							//printf("Entered hash!\n");
 						}
-						//printf("Added thing %p, %s, %p", ep, ep->key, ep->data);
-						//exit(0);
+
+						words++;
+						printf("new word, words=%d\n", words);
+
+					//printf("Added thing %p, %s, %p", ep, ep->key, ep->data);
+					//exit(0);
 					}
 
 					// Clear out the current word.
-					memset(thisword, 0, sizeof(char)*MAX_WORD_LENGTH);
+					//memset(thisword, 0, sizeof(char)*MAX_WORD_LENGTH);
+					thisword[0] = '\0';
 					//clear_string(thisword);
 					inword = 0;
 				}
 
 			}
-		// Debug code, do we have anything here?
-		//ENTRY e, *ep;
-		//e.key = "thy";
-		//lcase(e.key);
-		//hsearch_r(e, FIND, &ep, hash);
-		//hsearch_r(e, FIND, &ep, hash);
-		//if(ep) {
-			//printf("Found here! %d\n", ((word_count_t*)ep->data)->count);
-		//} else {
-			//printf("Not even here, seriously?\n");
-		//}
-			
-		}
+
+			//printf("Words: %u\n", words);
+
 
 
 
 	}
+
+		// Debug code, do we have anything here?
+		ENTRY et, *ept;
+		et.key = "thy";
+		lcase(et.key);
+		hsearch_r(et, FIND, &ept, hash);
+		hsearch_r(et, FIND, &ept, hash);
+		if(ept) {
+
+			printf("Found here! C:%d, TID:%d\n", ((word_count_t*)ept->data)->count, id);
+		} else {
+			printf("Not even here, seriously? TID:%d\n", id);
+		}
+			
+		}	
 
 
 	// Iterate through the input file and print out the word counts7
